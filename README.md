@@ -8,6 +8,14 @@ These tools are written in Python 3.5 (or later).  Required python packages
 are listed in `requirements.txt` in the base of the repository.  Some features
 also require the external tools `cdo`, `ncrcat`, and `ncpdq`.
 
+```
+module load cdo
+
+module load ncrcat
+
+module load ncpdq
+```
+
 ## Potential Pitfalls
 
 ##### Pressure levels ignore orography
