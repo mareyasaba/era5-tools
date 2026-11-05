@@ -7,11 +7,15 @@ from pathlib import Path
 import os
 import xarray as xr
 
+parser = argparse.ArgumentParser(description="Build GRTCODE ERA5 input files.")
+parser.add_argument("--start", type=int, default=2022, help="first year (inclusive)")
+parser.add_argument("--end", type=int, default=2025, help="last year (inclusive)")
+args = parser.parse_args()
 
 os.makedirs("data", exist_ok=True)
 os.makedirs("monthly", exist_ok=True)
 
-for year in range(2022, 2026):   # 2022-2025, Jan to Dec
+for year in range(args.start, args.end + 1):   # Jan to Dec of each year
     level_file = Path(f"./data/{year}-level_data.nc")
     single_file = Path(f"./data/{year}-single_data.nc")
     level_file_remap = Path(f"./data/{year}-level_data_remap.nc")
