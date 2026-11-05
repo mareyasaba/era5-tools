@@ -1,4 +1,4 @@
-"""Downloads ERA5 data for radiation calculations from the Copernicus Data Store."""
+"""Downloads ERA5 monthly-mean data for GRTCODE from the (new, 2024+) Copernicus Data Store."""
 from collections import namedtuple
 
 from cdsapi import Client
@@ -18,124 +18,85 @@ class Download(Command):
         parser = subparsers.add_parser(command, help="{} help.".format(command))
         parser.add_argument("level_file", help="output file path for pressure level data.")
         parser.add_argument("single_file", help="output file path for single level data.")
-        parser.add_argument("timescale", choices=["hourly", "monthly"])
-        parser.add_argument("-y", help="Starting year.", type=int)
-        parser.add_argument("-Y", help="Ending year.", type=int)
-        parser.add_argument("-m", help="Starting month.", type=int)
-        parser.add_argument("-M", help="Ending month.", type=int)
-        parser.add_argument("-d", help="Starting day.", type=int)
-        parser.add_argument("-D", help="Ending day.", type=int)
-        parser.add_argument("-t", help="Starting hour.", type=int)
-        parser.add_argument("-T", help="Ending hour.", type=int)
+        parser.add_argument("-y", help="Starting year.", type=int, required=True)
+        parser.add_argument("-Y", help="Ending year.", type=int, required=True)
+        parser.add_argument("-m", help="Starting month.", type=int, default=1)
+        parser.add_argument("-M", help="Ending month.", type=int, default=12)
         parser.set_defaults(func=download_)
 
 
 def download_(args):
-    """Downloads ERA5 clear-sky radiation-related data.
+    """Command-line wrapper around download()."""
+    download(args.level_file, args.single_file, args.y, args.Y, args.m, args.M)
+
+
+def download(level_output, single_output, start_year, end_year, start_month, end_month):
+    """Download ERA5 monthly averaged data from the Copernicus Data Store (CDS).
+
+    Requires a CDS account and credentials in $HOME/.cdsapirc.
 
     Args:
-        args: Namespace object returned by ArgumentParser().parse_args().
-    """
-    download(args.level_file, args.single_file, args.timescale,
-             args.y, args.Y, args.m, args.M, args.d, args.D, args.t, args.T)
-
-
-def download(level_output, single_output, timescale, y, Y, m, M, d=None,
-             D=None, t=None, T=None):
-    """Download data from the Copernicus Data Store (CDS).  This requires an
-       account, and associated credientials in a file $HOME/.cdsapirc.
-
-    Args:
-        level_output: Output file containing data on pressure levels.
-        single_output: Output file containing data on single levels.
-        y: Starting year.
-        Y: Ending year.
-        m: Starting month.
-        M: Ending month.
+        level_output: Output file path for pressure level data.
+        single_output: Output file path for single level data.
+        start_year: Starting year (inclusive).
+        end_year: Ending year (inclusive).
+        start_month: Starting month (inclusive).
+        end_month: Ending month (inclusive).
     """
     client = Client()
+
     Product = namedtuple("Product", ("type", "level_name", "single_name"))
-    monthly = Product(type="monthly_averaged_reanalysis",
-                      level_name="reanalysis-era5-pressure-levels-monthly-means",
-                      single_name="reanalysis-era5-single-levels-monthly-means")
-    hourly = Product(type="reanalysis", level_name="reanalysis-era5-pressure-levels",
-                     single_name="reanalysis-era5-single-levels")
-    products = {"monthly" : monthly, "hourly" : hourly}
+    monthly = Product(
+        type="monthly_averaged_reanalysis",
+        level_name="reanalysis-era5-pressure-levels-monthly-means",
+        single_name="reanalysis-era5-single-levels-monthly-means"
+    )
 
-    years = tuple([x for x in range(y, Y+1)])
-    months = tuple([x for x in range(m, M+1)])
-    try:
-        days = tuple([x for x in range(d, D+1)])
-    except TypeError:
-        days = None
-    try:
-        times = tuple([x for x in range(t, T+1)])
-    except TypeError:
-        times = None
+    years = [str(x) for x in range(start_year, end_year + 1)]
+    months = ["{:02}".format(x) for x in range(start_month, end_month + 1)]
 
-    #Level variables.
-    variables = ("ozone_mass_mixing_ratio", "specific_humidity", "temperature",
-                 "fraction_of_cloud_cover", "specific_cloud_ice_water_content",
-                 "specific_cloud_liquid_water_content")
-    pressure_levels = (1, 2, 3, 5, 7, 10, 20, 30, 50, 70, 100, 125, 150, 175, 200,
-                       225, 250, 300, 350, 400, 450, 500, 550, 600, 650, 700, 750,
-                       775, 800, 825, 850, 875, 900, 925, 950, 975, 1000)
-    retrieve(client, products[timescale].level_name, products[timescale].type, level_output,
-             variables, years, months, days=days, times=times, pressure_levels=pressure_levels)
+    # Pressure level variables read by GRTCODE (era5/src/era5.c).
+    level_variables = [
+        "ozone_mass_mixing_ratio", "specific_humidity", "temperature",
+        "fraction_of_cloud_cover", "specific_cloud_ice_water_content",
+        "specific_cloud_liquid_water_content"
+    ]
+    # Note: the new CDS returns these in descending order (1000 -> 1 hPa);
+    # vertical_remap.py sorts them, so the order here does not matter.
+    pressure_levels = [
+        1, 2, 3, 5, 7, 10, 20, 30, 50, 70, 100, 125, 150, 175, 200,
+        225, 250, 300, 350, 400, 450, 500, 550, 600, 650, 700, 750,
+        775, 800, 825, 850, 875, 900, 925, 950, 975, 1000
+    ]
+    retrieve(client, monthly.level_name, monthly.type, level_output,
+             level_variables, years, months, pressure_levels=pressure_levels)
 
-    #Surface and TOA variables.
-    variables = ("near_ir_albedo_for_diffuse_radiation",
-                 "near_ir_albedo_for_direct_radiation",
-                 "skin_temperature",
-                 "surface_pressure",
-                 "toa_incident_solar_radiation",
-                 "uv_visible_albedo_for_diffuse_radiation",
-                 "uv_visible_albedo_for_direct_radiation",
-                 "2m_temperature",
-                 "mean_surface_downward_long_wave_radiation_flux_clear_sky",
-                 "mean_surface_downward_short_wave_radiation_flux_clear_sky",
-                 "mean_surface_net_long_wave_radiation_flux_clear_sky",
-                 "mean_surface_net_short_wave_radiation_flux_clear_sky",
-                 "mean_top_downward_short_wave_radiation_flux",
-                 "mean_top_net_long_wave_radiation_flux_clear_sky",
-                 "mean_top_net_short_wave_radiation_flux_clear_sky"
-                 "mean_surface_downward_long_wave_radiation_flux",
-                 "mean_surface_downward_short_wave_radiation_flux",
-                 "mean_surface_downward_uv_radiation_flux",
-                 "mean_surface_net_long_wave_radiation_flux",
-                 "mean_surface_net_short_wave_radiation_flux",
-                 "mean_top_downward_short_wave_radiation_flux",
-                 "mean_top_net_long_wave_radiation_flux",
-                 "mean_top_net_short_wave_radiation_flux")
-    retrieve(client, products[timescale].single_name, products[timescale].type, single_output,
-             variables, years, months, days=days, times=times)
+    # Surface and TOA variables read by GRTCODE (era5/src/era5.c): sp, skt, t2m, fal, tisr.
+    # Raymond's original also fetched ERA5's own radiative fluxes and UV/NIR albedos for
+    # validation; GRTCODE does not read them, so they are not downloaded here.
+    single_variables = [
+        "skin_temperature",
+        "surface_pressure",
+        "2m_temperature",
+        "forecast_albedo",
+        "toa_incident_solar_radiation"
+    ]
+    retrieve(client, monthly.single_name, monthly.type, single_output,
+             single_variables, years, months)
 
 
-def retrieve(client, name, product, output, variables, years, months, days=None, times=None,
+def retrieve(client, dataset_name, product_type, target_file, variables, years, months,
              pressure_levels=None):
-    """Helper function to facilitate the downloads from CDS.
-
-    Args:
-        client: cdsapi Client object.
-        name: Dataset name.
-        product: Dataset type.
-        output: Name of the output file.
-        variables: Tuple of variable names.
-        years: Tuple of years.
-        months: Tuple of months.
-        days: Tuple of days.
-        times: Tuple of times.
-        pressure_levels: Tuple of pressure levels.
-     """
-    parameters = {"format" : "netcdf", "month" : ["{:02}".format(x) for x in months],
-                  "product_type" : product, "variable" : variables,
-                  "year": ["{:04d}".format(x) for x in years]}
-    if days is not None:
-        parameters["day"] = ["{:02d}".format(x) for x in days]
-    if times is None:
-        parameters["time"] = "00:00"
-    else:
-        parameters["time"] = ["{:02d}:00".format(x) for x in times]
-    if pressure_levels is not None:
-        parameters["pressure_level"] = [str(x) for x in pressure_levels]
-    client.retrieve(name, parameters, output)
+    """Helper function to perform a CDS retrieval."""
+    request = {
+        "product_type": product_type,
+        "variable": variables,
+        "year": years,
+        "month": months,
+        "time": "00:00",
+        "data_format": "netcdf",
+        "download_format": "unarchived"
+    }
+    if pressure_levels:
+        request["pressure_level"] = [str(p) for p in pressure_levels]
+    client.retrieve(dataset_name, request, target_file)

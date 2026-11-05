@@ -1,6 +1,7 @@
 """Vertically remaps netCDF data."""
 from netCDF4 import Dataset
-from numpy import append, asarray, copy, linspace, moveaxis, ravel, reshape, searchsorted, zeros
+from numpy import (all as np_all, append, argsort, asarray, copy, diff, linspace, moveaxis,
+                   ravel, reshape, searchsorted, zeros)
 from scipy.interpolate import interp1d
 
 from .cf_netcdf import CfDataset, CfVariable
@@ -151,6 +152,7 @@ class VerticalRemapper(object):
 
                 #Vertically remap the variable.
                 if variable.parent.name in surface_variables:
+                    print(f"variable "+variable.parent.name + " found") 
                     sv = surface_data.variables[surface_variables[variable.parent.name]]
                     try:
                         conversion = converter.convert(sv.getncattr("units"),
@@ -166,6 +168,16 @@ class VerticalRemapper(object):
                 new_shape = rs.shape
                 x = reshape(rs, (variable.parent.size//variable.pressure.size,
                                  variable.pressure.size))
+
+                #FIX: the new CDS writes pressure_level as 1000 -> 1 hPa, the legacy CDS wrote
+                #1 -> 1000 hPa.  searchsorted() and the "last level above ground" logic below
+                #assume ascending pressure, so sort the input levels (and the data) ascending.
+                level_pressure = asarray(variable.pressure[...], dtype=float)
+                order = argsort(level_pressure)
+                level_pressure = level_pressure[order]
+                x = x[:, order]
+                if not np_all(diff(level_pressure) > 0):
+                    raise ValueError("input pressure levels are not strictly monotonic.")
                 y = zeros(x.shape)
                 if sv is not None:
                     x_surface = ravel(sv[...])
@@ -175,7 +187,7 @@ class VerticalRemapper(object):
                 sp = surface_data.variables[surface_pressure]
                 conversion = converter.convert(sp.getncattr("units"), variable.pressure_units)
                 sp = sp[...]*conversion
-                indices = ravel(searchsorted(variable.pressure, sp))
+                indices = ravel(searchsorted(level_pressure, sp))
                 sp1d = ravel(sp)
 
                 #Loop through each column and interpolate, adding in the surface values and
@@ -186,7 +198,7 @@ class VerticalRemapper(object):
                     else:
                         xs = x_surface[i]
                     column = append(copy(x[i,:indices[i]]), xs)
-                    p = append(copy(variable.pressure[:indices[i]]), sp1d[i])
+                    p = append(copy(level_pressure[:indices[i]]), sp1d[i])
                     z[i,:], y[i,:] = self.remap_column(column, p, sp1d[i],
                                                        variable.pressure_units, converter,
                                                        fill_value=column[0])
