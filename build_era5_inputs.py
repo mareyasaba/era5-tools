@@ -1,3 +1,8 @@
+"""Build GRTCODE ERA5 input files ({year}-era5.nc) for a range of years.
+
+Usage:  python3 build_era5_inputs.py --start 2022 --end 2025
+(normally run via ./run_download.sh, which loads the modules and checks the setup first)
+"""
 import argparse
 from era5.download import download
 from era5.horizontal_remap import remap as hori_remap
@@ -11,6 +16,7 @@ parser = argparse.ArgumentParser(description="Build GRTCODE ERA5 input files.")
 parser.add_argument("--start", type=int, default=2022, help="first year (inclusive)")
 parser.add_argument("--end", type=int, default=2025, help="last year (inclusive)")
 args = parser.parse_args()
+
 
 os.makedirs("data", exist_ok=True)
 os.makedirs("monthly", exist_ok=True)

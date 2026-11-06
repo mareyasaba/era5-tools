@@ -24,5 +24,5 @@ log="logs/era5_${start}-${end}_$(date +%Y%m%d-%H%M%S).log"
   echo "cdo:        $(cdo --version 2>&1 | head -1)"
   echo "python:     $(python3 --version)"
 } > "$log"
-nohup python3 -u download_2021to2025.py --start "$start" --end "$end" >> "$log" 2>&1 &
+nohup python3 -u build_era5_inputs.py --start "$start" --end "$end" >> "$log" 2>&1 &
 echo "Started (pid $!). Follow with: tail -f $log"
