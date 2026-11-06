@@ -132,3 +132,4 @@ monthly/
 *.log
 *.swp
 *_backup.py
+logs/
