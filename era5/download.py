@@ -1,5 +1,10 @@
 """Downloads ERA5 monthly-mean data for GRTCODE from the (new, 2024+) Copernicus Data Store."""
 from collections import namedtuple
+from glob import glob
+from os import replace
+from os.path import abspath, dirname, join
+from tempfile import TemporaryDirectory
+from zipfile import ZipFile, is_zipfile
 
 from cdsapi import Client
 
@@ -100,3 +105,56 @@ def retrieve(client, dataset_name, product_type, target_file, variables, years, 
     if pressure_levels:
         request["pressure_level"] = [str(p) for p in pressure_levels]
     client.retrieve(dataset_name, request, target_file)
+    merge_if_zip(target_file)
+
+
+def merge_if_zip(path):
+    """The new CDS returns a ZIP of several netCDF files (even with
+    download_format="unarchived") when a request mixes variables of different
+    kinds, e.g. instantaneous fields (sp, skt, t2m, fal) and accumulations (tisr).
+    If `path` is such a ZIP, merge its netCDF files into one netCDF file at `path`.
+
+    Raises ValueError if the pieces do not share identical coordinates, rather than
+    letting xarray fill the mismatches with NaN.
+    """
+    path = str(path)
+    if not is_zipfile(path):
+        return
+    import xarray as xr
+    # Work next to the target file so the final rename stays on one filesystem.
+    with TemporaryDirectory(dir=dirname(abspath(path))) as tmp:
+        with ZipFile(path) as z:
+            z.extractall(tmp)
+        files = sorted(glob(join(tmp, "**", "*.nc"), recursive=True))
+        if not files:
+            raise ValueError(f"{path} is a ZIP with no netCDF files inside.")
+        print(f"{path} is a ZIP of {len(files)} netCDF files; merging them.")
+        datasets = [xr.open_dataset(f) for f in files]
+        for f, d in zip(files, datasets):
+            if "valid_time" in d.coords:
+                print("  {}: {} .. {} ({} times)".format(
+                    f.split("/")[-1], d.valid_time.values[0], d.valid_time.values[-1],
+                    d.sizes["valid_time"]))
+        # Monthly means: accumulated fields (e.g. tisr) can be time-stamped differently
+        # from instantaneous ones within the same month.  Label every field by the start of
+        # its month, but only if each file then has the same set of distinct months.
+        months = []
+        for i, d in enumerate(datasets):
+            if "valid_time" in d.coords:
+                m = d.valid_time.values.astype("datetime64[M]")
+                if len(set(m.tolist())) != m.size:
+                    raise ValueError(f"{files[i]} has more than one time per month.")
+                months.append(m)
+                datasets[i] = d.assign_coords(valid_time=m.astype("datetime64[ns]"))
+        if any(m.size != months[0].size or (m != months[0]).any() for m in months):
+            raise ValueError(f"the files in {path} do not cover the same months.")
+        merged = xr.merge(datasets, join="exact", compat="override", combine_attrs="drop_conflicts")
+        merged.load()
+        for d in datasets:
+            d.close()
+        for name, v in merged.data_vars.items():
+            if v.dtype.kind == "f" and bool(v.isnull().all()):
+                raise ValueError(f"variable {name} is entirely NaN after merging {path}.")
+        out = join(tmp, "merged.nc")
+        merged.to_netcdf(out)
+        replace(out, path)
